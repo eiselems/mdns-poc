@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mDNS Discovery PoC</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        #devicesList li { margin-bottom: 10px; padding: 5px; border: 1px solid #eee; }
+        #response { margin-top: 20px; padding: 10px; background-color: #f0f0f0; border: 1px solid #ccc; white-space: pre-wrap; }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; }
+        button { margin-left: 10px; cursor: pointer;}
+    </style>
+</head>
+<body>
+
+    <h1>mDNS Service Discovery PoC</h1>
+
+    <h2>Discovered Backend Services (via BFF)</h2>
+    <p>Polling <a href="http://localhost:1337/devices" target="_blank">http://localhost:1337/devices</a> every 5 seconds...</p>
+    <ul id="devicesList">
+        <li>Loading...</li>
+    </ul>
+
+    <h2>Backend API Response</h2>
+    <pre id="response">Click "Call Hello World" on a discovered service.</pre>
+
+    <script>
+        const devicesListEl = document.getElementById('devicesList');
+        const responseEl = document.getElementById('response');
+        const bffBaseUrl = 'http://localhost:1337'; // BFF location
+
+        let discoveredServices = []; // Store the latest list
+
+        // --- Function to fetch and display devices ---
+        async function fetchDevices() {
+            try {
+                const response = await fetch(`${bffBaseUrl}/devices`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                discoveredServices = await response.json(); // Update global store
+
+                devicesListEl.innerHTML = ''; // Clear previous list
+
+                if (discoveredServices.length === 0) {
+                    devicesListEl.innerHTML = '<li>No backend services discovered yet...</li>';
+                } else {
+                    discoveredServices.forEach(service => {
+                        const li = document.createElement('li');
+                        li.textContent = `Name: ${service.name}, Referer: ${service.referer}, FQDN: ${service.fqdn}, Port: ${service.port}`;
+
+                        const button = document.createElement('button');
+                        button.textContent = 'Call Hello World';
+                        // Use data attributes to pass service name safely
+                        button.dataset.serviceName = service.name;
+                        button.onclick = callBackendApi; // Attach event listener
+
+                        li.appendChild(button);
+                        devicesListEl.appendChild(li);
+                    });
+                }
+            } catch (error) {
+                console.error('Error fetching devices:', error);
+                devicesListEl.innerHTML = `<li class="error">Error fetching devices: ${error.message}. Is the BFF running?</li>`;
+            }
+        }
+
+        // --- Function to call the backend via the BFF proxy ---
+        async function callBackendApi(event) {
+            const serviceName = event.target.dataset.serviceName; // Get name from button data
+            if (!serviceName) {
+                responseEl.textContent = 'Error: Could not determine service name.';
+                responseEl.className = 'error';
+                return;
+            }
+
+            // Find the service details (optional, could rely solely on BFF knowing it)
+            const service = discoveredServices.find(s => s.name === serviceName);
+            if (!service) {
+                 responseEl.textContent = `Error: Service '${serviceName}' details not found in current list. It might have gone down.`;
+                 responseEl.className = 'error';
+                 return;
+            }
+
+            const proxyUrl = `${bffBaseUrl}/proxy/${serviceName}/api/v1/hello-world`;
+            responseEl.textContent = `Calling ${proxyUrl}...`;
+            responseEl.className = ''; // Reset class
+
+            try {
+                console.log(`Attempting to fetch: ${proxyUrl}`);
+                const response = await fetch(proxyUrl);
+                const responseData = await response.json(); // Assume JSON response
+
+                if (!response.ok) {
+                     // Try to include error details from the BFF/Backend if available
+                    const errorMsg = responseData.error || `HTTP error! status: ${response.status}`;
+                    throw new Error(errorMsg);
+                }
+
+                responseEl.textContent = JSON.stringify(responseData, null, 2);
+                responseEl.className = 'success';
+
+            } catch (error) {
+                console.error('Error calling backend API via proxy:', error);
+                responseEl.textContent = `Error calling backend: ${error.message}`;
+                responseEl.className = 'error';
+            }
+        }
+
+        // --- Initial Fetch and Polling ---
+        fetchDevices(); // Initial fetch
+        setInterval(fetchDevices, 5000); // Poll every 5 seconds
+
+    </script>
+
+</body>
+</html>
